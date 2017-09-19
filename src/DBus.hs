@@ -10,8 +10,6 @@ import DBus.Wire
 
 import Types
 
-data X a = X (Fix NT) (NV a) deriving (Functor)
-
 host2NV :: (NT () -> a -> NV a) -> (Fix NT, a) -> X (Fix NT, a)
 host2NV f (a, b) = let a' = unfix a
                        nt = void a'

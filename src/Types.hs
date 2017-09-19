@@ -1,9 +1,11 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Types where
 import Data.Align
 import Data.ByteString (ByteString)
 import Data.Eq.Deriving
 import Data.Functor.Foldable
 import Data.Int
+import Data.Ord.Deriving
 import Data.Text (Text)
 import Data.These
 import GHC.Generics
@@ -24,6 +26,7 @@ data NT r
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable, Generic, Generic1)
 
 deriveEq1 ''NT
+deriveOrd1 ''NT
 deriveShow1 ''NT
 
 data NV r
@@ -41,7 +44,11 @@ data NV r
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable, Generic, Generic1)
 
 deriveEq1 ''NV
+deriveOrd1 ''NV
 deriveShow1 ''NV
+
+data X a = X (Fix NT) (NV a)
+  deriving (Eq, Ord, Show, Functor, Foldable, Traversable, Generic, Generic1)
 
 typeCheck :: NT a -> NV b -> Maybe (NV (a, b))
 typeCheck  NInteger     (VInteger   i) = Just $ VInteger i

@@ -4,6 +4,7 @@ import Control.Monad
 import Data.Functor.Foldable
 import Test.QuickCheck
 
+import Internal.Gen
 import Types
 
 instance Arbitrary1 f => Arbitrary (Fix f) where
@@ -24,3 +25,6 @@ instance Arbitrary1 NT where
                    , (2, NOptional <$> g)
                    ]
     where leafs = [ NInteger , NDouble , NText , NByteArray , NJSON]
+
+instance Arbitrary1 X where
+  liftArbitrary g = arbitrary >>= \nt -> X nt <$> genNVfromNT' (const g) nt
