@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE Strict #-}
 module Types where
 import Data.Align
 import Data.Bifunctor
@@ -23,6 +24,7 @@ data NT r
   | NStruct [(String, r)]
   | NSum [(String, r)]
   | NArray r
+  | NArrayItem Int64 r
   | NOptional r
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable, Generic, Generic1)
 
@@ -40,7 +42,9 @@ data NV r
   | VTuple [r]
   | VStruct [r]
   | VSum Int r
-  | VArray Int [r]
+  | VArray r
+  | VArrayItem r r
+  | VArrayEnd
   | VOptional (Maybe r)
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable, Generic, Generic1)
 
@@ -55,25 +59,30 @@ deriveEq1 ''X
 deriveOrd1 ''X
 deriveShow1 ''X
 
-typeCheck :: NT a -> NV b -> Maybe (NV (a, b))
-typeCheck  NInteger     (VInteger   i) = Just $ VInteger i
-typeCheck  NDouble      (VDouble    d) = Just $ VDouble d
-typeCheck  NText        (VText      t) = Just $ VText t
-typeCheck  NByteArray   (VByteArray b) = Just $ VByteArray b
-typeCheck  NBool        (VBool      b) = Just $ VBool b
-typeCheck  NJSON        (VJSON      j) = Just $ VJSON j
-typeCheck (NTuple   ts) (VTuple    vs) = VTuple <$> traverse justThese (align ts vs)
-typeCheck (NStruct  ts) (VStruct   vs) = VStruct <$> traverse justThese (align (fmap snd ts) vs)
-typeCheck (NSum     ts) (VSum cons vs) = if cons >= 0 && cons < length ts
-                                         then Just $ VSum cons (snd $ ts !! cons, vs)
-                                         else Nothing
-typeCheck (NArray    t) (VArray l  ts) = Just . VArray l $ fmap (t,) ts
-typeCheck (NOptional t) (VOptional  m) = Just . VOptional $ fmap (t,) m
-typeCheck _             _              = Nothing
+typeCheck :: Fix NT -> NV b -> Maybe (NV (Fix NT, b))
+typeCheck (Fix a) = go a
+  where
+    go  NInteger     (VInteger   i) = Just $ VInteger i
+    go  NDouble      (VDouble    d) = Just $ VDouble d
+    go  NText        (VText      t) = Just $ VText t
+    go  NByteArray   (VByteArray b) = Just $ VByteArray b
+    go  NBool        (VBool      b) = Just $ VBool b
+    go  NJSON        (VJSON      j) = Just $ VJSON j
+    go (NTuple   ts) (VTuple    vs) = VTuple <$> traverse justThese (align ts vs)
+    go (NStruct  ts) (VStruct   vs) = VStruct <$> traverse justThese (align (fmap snd ts) vs)
+    go (NSum     ts) (VSum cons vs) = if cons >= 0 && cons < length ts
+                                      then Just $ VSum cons (snd $ ts !! cons, vs)
+                                      else Nothing
+    go (NArray    t) (VArray     v) = Just $ VArray (Fix $ NArrayItem 0 t, v)
+    go (NArrayItem _ t) (VArrayItem v w) = Just $ VArrayItem (t, v) (Fix $ NArrayItem 0 t, w)
+    go (NArrayItem _ _) VArrayEnd = Just VArrayEnd
+    go (NOptional t) (VOptional  m) = Just . VOptional $ fmap (t,) m
+    go _             _              = Nothing
 
 tc :: Fix NT -> Fix NV -> Maybe (Fix NV)
-tc (Fix a) (Fix b) = typeCheck a b >>= fmap Fix . traverse (uncurry tc)
+tc a (Fix b) = typeCheck a b >>= fmap Fix . traverse (uncurry tc)
 
+{-
 afoo :: Fix X -> Maybe (Fix X)
 afoo = go where go (Fix x) = altfoo x >>= fmap Fix . traverse go
 
@@ -110,6 +119,7 @@ boink :: Eq a => [a] -> [a] -> Bool
 boink as bs = maybe False comp go
   where go = traverse justThese (align as bs)
         comp = all $ uncurry (==)
+-}
 
 extractNV :: Fix X -> Fix NV
 extractNV = Fix . go . fmap extractNV . unfix

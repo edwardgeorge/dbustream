@@ -1,16 +1,21 @@
 module DBus where
+import Control.Applicative
 import Control.Monad
+import Control.Monad.Trans.Class
 import Data.Align
+import qualified Data.Binary.Get as B
 import qualified Data.ByteString as BS
+import Data.Functor
 import Data.Functor.Compose
 import Data.Functor.Foldable
 import Data.These
 import DBus.Types
-import DBus.Wire
+import DBus.Wire hiding (getMany)
+import GHC.Stack
 
 import Types
 
-host2NV :: (NT () -> a -> NV a) -> (Fix NT, a) -> X (Fix NT, a)
+host2NV :: HasCallStack => (NT () -> a -> NV a) -> (Fix NT, a) -> X (Fix NT, a)
 host2NV f (a, b) = let a' = unfix a
                        nt = void a'
                    in case (a', f nt b) of
@@ -23,7 +28,9 @@ host2NV f (a, b) = let a' = unfix a
                         (NTuple    t, VTuple     i) -> X a . VTuple $ zip t i -- TODO: check length?
                         (NStruct   t, VStruct    i) -> X a . VStruct $ zip (fmap snd t) i -- TODO: check length?
                         (NSum      t, VSum     c i) -> X a $ VSum c (snd $ t !! c, i)
-                        (NArray    t, VArray   l i) -> X a . VArray l $ fmap (t,) i
+                        (NArray    t, VArray     i) -> X a $ VArray (Fix (NArrayItem 0 t), i)
+                        (NArrayItem _ t, VArrayItem i j) -> X a $ VArrayItem (t, i) (Fix (NArrayItem 0 t), j)
+                        (NArrayItem _ _, VArrayEnd) -> X a $ VArrayEnd
                         (NOptional t, VOptional  i) -> X a . VOptional $ fmap (t,) i
                         _                           -> error "type mismatch"
 
@@ -36,7 +43,7 @@ deserialise f dt nt = hylo (sequenceNV f . getCompose) (Compose . uncurry getCoa
 palg :: X (DBusType, DBusPut ()) -> (DBusType, DBusPut ())
 palg (X (Fix t) nv) = putAlg (fmap convFixNT t) $ fmap snd nv
 
-putAlg :: NT DBusType -> NV (DBusPut ()) -> (DBusType, DBusPut ())
+putAlg :: HasCallStack => NT DBusType -> NV (DBusPut ()) -> (DBusType, DBusPut ())
 putAlg t' v = (convNT t', go t' v)
   where
     go _             (VInteger    i) = putInt64 i
@@ -51,39 +58,49 @@ putAlg t' v = (convNT t', go t' v)
                                           DBus.Wire.putWord8 (fromIntegral c)
                                           putSignatures [snd $ t !! c]
                                           r
-    go (NArray t)    (VArray    _ r) = do let al = alignment t
-                                              content = sequence_ r
-                                          size <- sizeOf 4 al content
+    go (NArray t)    (VArray      r) = do let al = alignment t
+                                          size <- sizeOf 4 al r
                                           putWord32 $ fromIntegral size
                                           alignPut al
-                                          content
+                                          r
+    go (NArrayItem _ _) (VArrayItem r s) = r >> s
+    go (NArrayItem _ _) VArrayEnd        = pure ()
     go (NOptional t) (VOptional   x) = do alignPut 8
                                           case x of
                                             Nothing -> do DBus.Wire.putWord8 0
-                                                          putSignatures []
+                                                          -- can't have empty sigs
+                                                          putSignatures [DBusSimpleType TypeByte]
+                                                          putWord8 0
                                             Just  y -> do DBus.Wire.putWord8 1
                                                           putSignatures [t]
                                                           y
     go _             _               = fail "type mismatch"
 
-getCoalg :: DBusType -> Fix NT -> DBusGet (NV (DBusType, Fix NT))
+getCoalg :: HasCallStack => DBusType -> Fix NT -> DBusGet (NV (DBusType, Fix NT))
+getCoalg s             (Fix (NArrayItem l m)) = do cur <- fromIntegral <$> lift B.bytesRead
+                                                   case compare cur l of
+                                                     LT -> pure $ VArrayItem (s, m) (s, Fix $ NArrayItem l m)
+                                                     EQ -> pure VArrayEnd
+                                                     GT -> error "too many bytes read for array"
 getCoalg (DBusSimpleType s) (Fix n) = case (s, n) of
   (TypeInt64,   NInteger) -> VInteger <$> getInt64
   (TypeDouble,  NDouble)  -> VDouble <$> getDouble
   (TypeString,  NText)    -> VText <$> getText
   (TypeString,  NJSON)    -> VJSON <$> getText
   (TypeBoolean, NBool)    -> VBool <$> getBool
-  _                       -> fail ""
+  _                       -> fail "boop"
 getCoalg (TypeArray s) (Fix n) = do
   len <- fromIntegral <$> getWord32
+  alignGet (alignment s)
+  cur <- fromIntegral <$> lift B.bytesRead
   case (s, n) of
-    (_,                       NArray m   ) -> return . VArray len $ replicate len (s, m)
+    (_,                       NArray m   ) -> pure $ VArray (s, Fix $ NArrayItem (cur + fromIntegral len) m)
     (DBusSimpleType TypeByte, NByteArray ) -> VByteArray <$> getByteString len
     (t,                       NOptional m) -> case len of
                                                 0 -> return $ VOptional Nothing
                                                 1 -> return $ VOptional (Just (t, m))
-                                                _ -> fail ""
-    (_,                       _          ) -> fail ""
+                                                _ -> fail "sdfsdf"
+    (_,                       _          ) -> fail "sdfsdf"
 getCoalg (TypeStruct [DBusSimpleType s, TypeVariant]) (Fix n) = do
   alignGet 8
   case (s, n) of
@@ -91,11 +108,13 @@ getCoalg (TypeStruct [DBusSimpleType s, TypeVariant]) (Fix n) = do
                                      t <- maybe (fail "") (return . snd) $ listIndex con m
                                      ss <- getSig
                                      return $ VSum con (ss, t)
-    (TypeBoolean, NOptional m) -> do inh <- getBool
-                                     if inh
-                                       then do ss <- getSig
-                                               return $ VOptional (Just (ss, m))
-                                       else return $ VOptional Nothing
+    (TypeBoolean, NOptional m) -> do inh <- getWord8
+                                     ss <- getSig
+                                     if inh > 0
+                                       then return $ VOptional (Just (ss, m))
+                                       else if ss /= DBusSimpleType TypeByte
+                                            then fail "grrehfefg"
+                                            else getWord8 $> VOptional Nothing
     (_,           _          ) -> fail ""
 getCoalg (TypeStruct s) (Fix n) = do
   alignGet 8
@@ -122,7 +141,9 @@ sequenceNV f m = m >>= \case
   VTuple           i -> f . VTuple <$> sequence i
   VStruct          i -> f . VStruct <$> sequence i
   VSum           c i -> f . VSum c <$> i
-  VArray         l i -> f . VArray l <$> sequence i
+  VArray           i -> f . VArray <$> i
+  VArrayItem     i j -> f <$> liftM2 VArrayItem i j
+  VArrayEnd          -> pure $ f VArrayEnd
   VOptional  Nothing -> return . f $ VOptional Nothing
   VOptional (Just i) -> f . VOptional . Just <$> i
 
@@ -140,9 +161,10 @@ convNT (NTuple   rs) = TypeStruct rs
 convNT (NStruct  rs) = TypeStruct $ fmap snd rs
 convNT (NSum      _) = TypeStruct [DBusSimpleType TypeByte, TypeVariant]
 convNT (NArray    t) = TypeArray t
+convNT (NArrayItem _ t) = t
 convNT (NOptional _) = TypeStruct [DBusSimpleType TypeBoolean, TypeVariant]
 
-getSig :: DBusGet DBusType
+getSig :: HasCallStack => DBusGet DBusType
 getSig = do ss <- getSignatures
             case ss of
               [s] -> return s

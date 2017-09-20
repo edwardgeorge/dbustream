@@ -40,6 +40,7 @@ packages:
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
+- binary-0.8.5.1
 - d-bus-0.1.7
 - generic-random-1.0.0.0
 - recursion-schemes-5.0.2

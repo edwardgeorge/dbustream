@@ -5,6 +5,7 @@ import Test.Tasty.QuickCheck
 import Test.QuickCheck
 
 import Gen
+import Lib
 import Types
 
 main :: IO ()
@@ -15,5 +16,8 @@ tests = testGroup "tests" [qcProps]
 
 qcProps :: TestTree
 qcProps = testGroup "quickcheck properties"
-  [ testProperty "test generation X" (forAll genX $ isJust . afoo)
+  [ testProperty "test generation X" (forAll gen $ isJust . uncurry tc)
+  , testProperty "round trip" (forAll gen $ \(a, b) -> b == run a b)
   ]
+
+gen = arbitrary >>= \n -> (n,) <$> genNVfromNT n

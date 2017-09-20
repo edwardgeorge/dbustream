@@ -1,5 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Instances.Serial where
+import Control.Monad.Trans.Reader
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Foldable
@@ -33,7 +34,7 @@ instance Monad m => Serial1 m NT where
                                  , NArray <$> s
                                  , NOptional <$> s
                                  ]
-
+{-
 instance Serial m a => Serial m (NV a)
 
 instance Monad m => Serial1 m NV where
@@ -46,9 +47,10 @@ instance Monad m => Serial1 m NV where
                                  , VTuple <$> ls s
                                  , VStruct <$> ls s
                                  , VSum <$> series <~> s
-                                 , VArray <$> series <~> ls s
+                                 , VArray <$> s
                                  , VOptional <$> (series >>= traverse (\() -> s))
                                  ]
+-}
 
 instance Monad m => Serial m Int64 where
   series = (fromIntegral :: Int -> Int64) <$> series

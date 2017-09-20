@@ -23,6 +23,14 @@ genNVfromNT' g (Fix a) = go a
     go (NSum     ts) = do n <- choose (0, length ts - 1)
                           let (_, k) = ts !! n
                           VSum n <$> g k
-    go (NArray    t) = listOf (g t) >>= \l -> return $ VArray (length l) l
+    -- go (NArray    t) = listOf (g t) >>= \l -> return $ VArray (length l) l
+    go (NArray    t) = VArray <$> g (Fix $ NArrayItem 0 t)
+    go (NArrayItem _ t) = sized $ \n -> do k <- choose (0, n)
+                                           if k == 0
+                                             then pure VArrayEnd
+                                             else newArrayItem g t
     go (NOptional t) = VOptional <$> (arbitrary >>= \case Nothing -> return Nothing
                                                           Just () -> Just <$> g t)
+
+newArrayItem :: (Fix NT -> Gen a) -> Fix NT -> Gen (NV a)
+newArrayItem g t = g t >>= \a -> g (Fix $ NArrayItem 0 t) >>= \b -> return $ VArrayItem a b
