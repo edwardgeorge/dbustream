@@ -8,6 +8,7 @@ import qualified Data.ByteString as BS
 import Data.Functor
 import Data.Functor.Compose
 import Data.Functor.Foldable
+import Data.Int
 import Data.These
 import DBus.Types
 import DBus.Wire hiding (getMany)
@@ -76,20 +77,23 @@ putAlg t' v = (convNT t', go t' v)
                                                           y
     go _             _               = fail "type mismatch"
 
-getCoalg :: HasCallStack => DBusType -> Fix NT -> DBusGet (NV (DBusType, Fix NT))
-getCoalg s             (Fix (NArrayItem l m)) = do cur <- fromIntegral <$> lift B.bytesRead
-                                                   case compare cur l of
-                                                     LT -> pure $ VArrayItem (s, m) (s, Fix $ NArrayItem l m)
-                                                     EQ -> pure VArrayEnd
-                                                     GT -> error "too many bytes read for array"
-getCoalg (DBusSimpleType s) (Fix n) = case (s, n) of
-  (TypeInt64,   NInteger) -> VInteger <$> getInt64
-  (TypeDouble,  NDouble)  -> VDouble <$> getDouble
-  (TypeString,  NText)    -> VText <$> getText
-  (TypeString,  NJSON)    -> VJSON <$> getText
-  (TypeBoolean, NBool)    -> VBool <$> getBool
-  _                       -> fail "boop"
-getCoalg (TypeArray s) (Fix n) = do
+getArrayItem :: DBusType -> Int64 -> Fix NT -> DBusGet (NV (DBusType, Fix NT))
+getArrayItem s l m = do cur <- fromIntegral <$> lift B.bytesRead
+                        case compare cur l of
+                          LT -> pure $ VArrayItem (s, m) (s, Fix $ NArrayItem l m)
+                          EQ -> pure VArrayEnd
+                          GT -> error "too many bytes read for array"
+
+getSimple :: DBusSimpleType -> NT a -> DBusGet (NV b)
+getSimple TypeInt64   NInteger = VInteger <$> getInt64
+getSimple TypeDouble  NDouble  = VDouble <$> getDouble
+getSimple TypeString  NText    = VText <$> getText
+getSimple TypeString  NJSON    = VJSON <$> getText
+getSimple TypeBoolean NBool    = VBool <$> getBool
+getSimple _           _        = fail "simple fail"
+
+getFromArray :: DBusType -> NT (Fix NT) -> DBusGet (NV (DBusType, Fix NT))
+getFromArray s n = do
   len <- fromIntegral <$> getWord32
   alignGet (alignment s)
   cur <- fromIntegral <$> lift B.bytesRead
@@ -101,20 +105,31 @@ getCoalg (TypeArray s) (Fix n) = do
                                                 1 -> return $ VOptional (Just (t, m))
                                                 _ -> fail "sdfsdf"
     (_,                       _          ) -> fail "sdfsdf"
+
+getSum :: [(String, Fix NT)] -> DBusGet (NV (DBusType, Fix NT))
+getSum m = do con <- fromIntegral <$> DBus.Wire.getWord8
+              t <- maybe (fail "") (return . snd) $ listIndex con m
+              ss <- getSig
+              return $ VSum con (ss, t)
+
+getOptional :: Fix NT -> DBusGet (NV (DBusType, Fix NT))
+getOptional m = do inh <- getWord8
+                   ss <- getSig
+                   if inh > 0
+                     then return $ VOptional (Just (ss, m))
+                     else if ss /= DBusSimpleType TypeByte
+                          then fail "grrehfefg"
+                          else getWord8 $> VOptional Nothing
+
+getCoalg :: HasCallStack => DBusType -> Fix NT -> DBusGet (NV (DBusType, Fix NT))
+getCoalg s             (Fix (NArrayItem l m)) = getArrayItem s l m
+getCoalg (DBusSimpleType s) (Fix n) = getSimple s n
+getCoalg (TypeArray s) (Fix n) = getFromArray s n
 getCoalg (TypeStruct [DBusSimpleType s, TypeVariant]) (Fix n) = do
   alignGet 8
   case (s, n) of
-    (TypeByte,    NSum m     ) -> do con <- fromIntegral <$> DBus.Wire.getWord8
-                                     t <- maybe (fail "") (return . snd) $ listIndex con m
-                                     ss <- getSig
-                                     return $ VSum con (ss, t)
-    (TypeBoolean, NOptional m) -> do inh <- getWord8
-                                     ss <- getSig
-                                     if inh > 0
-                                       then return $ VOptional (Just (ss, m))
-                                       else if ss /= DBusSimpleType TypeByte
-                                            then fail "grrehfefg"
-                                            else getWord8 $> VOptional Nothing
+    (TypeByte,    NSum m     ) -> getSum m
+    (TypeBoolean, NOptional m) -> getOptional m
     (_,           _          ) -> fail ""
 getCoalg (TypeStruct s) (Fix n) = do
   alignGet 8
