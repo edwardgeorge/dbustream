@@ -16,7 +16,7 @@ import GHC.Stack
 
 import Types
 
-host2NV :: HasCallStack => (NT () -> a -> NV a) -> (Fix NT, a) -> X (Fix NT, a)
+host2NV :: HasCallStack => (forall x. NT x -> a -> NV a) -> (Fix NT, a) -> X (Fix NT, a)
 host2NV f (a, b) = let a' = unfix a
                        nt = void a'
                    in case (a', f nt b) of
@@ -35,7 +35,7 @@ host2NV f (a, b) = let a' = unfix a
                         (NOptional t, VOptional  i) -> X a . VOptional $ fmap (t,) i
                         _                           -> error "type mismatch"
 
-serialise :: (NT () -> a -> NV a) -> Fix NT -> a -> (DBusType, DBusPut ())
+serialise :: (forall x. NT x -> a -> NV a) -> Fix NT -> a -> (DBusType, DBusPut ())
 serialise f nt a = hylo palg (host2NV f) (nt, a)
 
 deserialise :: (NV a -> a) -> DBusType -> Fix NT -> DBusGet a

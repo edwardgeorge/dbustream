@@ -48,6 +48,7 @@ library
                        LambdaCase
                        MultiParamTypeClasses
                        PatternSynonyms
+                       RankNTypes
                        ScopedTypeVariables
                        TupleSections
                        TypeFamilies
