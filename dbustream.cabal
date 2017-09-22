@@ -66,6 +66,8 @@ test-suite dbustream-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:       base
+                     , recursion-schemes
+                     , smallcheck
                      , tasty
                      , tasty-hunit
                      , tasty-smallcheck

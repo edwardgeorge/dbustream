@@ -4,6 +4,7 @@ import Control.Monad.Trans.Reader
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Foldable
+import Data.Functor.Foldable
 import Data.Int
 import Data.Text (Text, pack)
 import Data.Word
@@ -13,6 +14,9 @@ import Types
 
 ls :: Monad m => Series m a -> Series m [a]
 ls s = x where x = cons0 [] \/ decDepth ((:) <$> s <~> x)
+
+instance (Monad m, Serial1 m f) => Serial m (Fix f) where
+  series = Fix <$> series1
 
 class Monad m => Serial1 m f where
   liftSeries :: Series m a -> Series m (f a)
@@ -28,12 +32,14 @@ instance Monad m => Serial1 m NT where
                                  , pure NText
                                  , pure NBool
                                  , pure NJSON
-                                 , NTuple <$> ls s
-                                 , NStruct <$> ls ((,) <$> series <~> s)
-                                 , NSum <$> ls ((,) <$> series <~> s)
+                                 , NTuple <$> ls1 s
+                                 , NStruct <$> ls1 withconstr
+                                 , NSum <$> ls1 withconstr
                                  , NArray <$> s
                                  , NOptional <$> s
                                  ]
+    where withconstr = (,) <$> series <~> s
+          ls1 t = (:) <$> decDepth t <~> decDepth (ls t)
 {-
 instance Serial m a => Serial m (NV a)
 
